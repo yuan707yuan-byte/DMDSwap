@@ -1,5 +1,5 @@
 {
   "name": "DMDSwap official token list",
-  "coreLogos": { "DMD": "/tokens/dmd.png", "WDMD": "/tokens/wdmd.png" },
+  "coreLogos": { "DMD": "/tokens/dmd.svg", "WDMD": "/tokens/wdmd.svg" },
   "tokens": []
 }
