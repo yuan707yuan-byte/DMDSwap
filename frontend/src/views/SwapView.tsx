@@ -166,8 +166,6 @@ function TradeDetails({ quote, tokenIn, tokenOut, slippageBps, inverted, onInver
   const aOut = quote.amounts[quote.amounts.length - 1]
   const impactClass = quote.impactBps > LIMITS.impactDangerBps ? 'bad' : quote.impactBps > LIMITS.impactWarnBps ? 'warn' : 'good'
   const route = [tokenIn.symbol, ...(quote.path.length === 3 ? ['WDMD'] : []), tokenOut.symbol]
-  const lpBps = Number(quote.feeBps) * (10_000 - Number(quote.shareBps)) / 10_000
-  const protoBps = Number(quote.feeBps) - lpBps
   return (
     <dl className="details">
       <div><dt>Rate</dt><dd><button className="linkish" onClick={onInvert}>
@@ -179,7 +177,7 @@ function TradeDetails({ quote, tokenIn, tokenOut, slippageBps, inverted, onInver
       {quote.kind === 'exactIn'
         ? <div><dt>Minimum received</dt><dd>{formatAmount(minOutWithSlippage(aOut, slippageBps), tokenOut.decimals)} {tokenOut.symbol}</dd></div>
         : <div><dt>Maximum spent</dt><dd>{formatAmount(maxInWithSlippage(aIn, slippageBps), tokenIn.decimals)} {tokenIn.symbol}</dd></div>}
-      <div><dt>Fee</dt><dd>{formatBps(Number(quote.feeBps))} ({formatBps(lpBps)} to liquidity providers, {formatBps(protoBps)} to DMDSwap)</dd></div>
+      <div><dt>Fee</dt><dd>{formatBps(Number(quote.feeBps))}</dd></div>
       <div><dt>Route</dt><dd className="route">{route.map((s, i) => <span key={i}>{s}</span>)}</dd></div>
       {quoteBlock !== null && <div><dt>Price as of</dt><dd>Block {quoteBlock.toLocaleString('en-US')}</dd></div>}
       {quote.impactBps > LIMITS.impactWarnBps && quote.impactBps <= LIMITS.impactBlockBps && (
