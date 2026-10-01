@@ -1,6 +1,6 @@
 import { Header } from './components/Header'
 import { Toasts } from './components/Toasts'
-import { ADDRESSES, EXPLORER_URL, IS_DEPLOYED } from './lib/config'
+import { IS_DEPLOYED, SOCIAL_LINKS } from './lib/config'
 import { AppProvider, useApp } from './store'
 import { LiquidityView } from './views/LiquidityView'
 import { PoolsView } from './views/PoolsView'
@@ -25,12 +25,11 @@ function Shell() {
         {tab === 'send' && <SendView />}
         {tab === 'pools' && <PoolsView />}
       </main>
-      {IS_DEPLOYED && (
-        <footer className="footer">
-          <a className="link" href={`${EXPLORER_URL}/address/${ADDRESSES.router}`} target="_blank" rel="noreferrer noopener">Verify the contracts on the DMD explorer</a>
-          <a className="link" href={`${EXPLORER_URL}/address/${ADDRESSES.timelock}`} target="_blank" rel="noreferrer noopener">Pending admin changes (24h timelock)</a>
-        </footer>
-      )}
+      <footer className="footer">
+        {SOCIAL_LINKS.map((l) => (
+          <a key={l.href} className="link" href={l.href} target="_blank" rel="noreferrer noopener">{l.label}</a>
+        ))}
+      </footer>
       <Toasts />
     </>
   )
