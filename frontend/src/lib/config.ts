@@ -6,6 +6,11 @@ export const RPC_URL = 'https://rpc.bit.diamonds'
 export const EXPLORER_URL = 'https://explorer.bit.diamonds'
 export const NAMES_APP_URL = 'https://ui.bit.diamonds/names'
 
+export const SOCIAL_LINKS = [
+  { label: 'X', href: 'https://x.com/DMDSwap' },
+  { label: 'Telegram', href: 'https://t.me/DMDSwap' },
+] as const
+
 export const dmdChain = defineChain({
   id: CHAIN_ID,
   name: 'DMD Diamond',
