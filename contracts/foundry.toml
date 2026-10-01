@@ -1,0 +1,40 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib", "node_modules"]
+# Exactly matches DMD Diamond v4 core (DMDcoin/contracts-monorepo foundry.base.toml):
+# solc 0.8.25 + London EVM. DMD runs an OpenEthereum-derived node: NO PUSH0 (Shanghai),
+# NO TSTORE/TLOAD/MCOPY (Cancun). Do not raise evm_version.
+solc = "0.8.25"
+evm_version = "london"
+optimizer = true
+optimizer_runs = 800
+via_ir = true  # same as DMD core + DMD Names (contracts-monorepo, diamond-contracts-registry)
+bytecode_hash = "none"
+extra_output = ["storageLayout"]
+ffi = false
+fs_permissions = [
+  { access = "read", path = "./test/fixtures" },
+  { access = "read-write", path = "./deployments" },
+]
+remappings = [
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "@openzeppelin/contracts-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/",
+  "forge-std/=lib/forge-std/src/",
+]
+
+[fuzz]
+runs = 1000
+
+[invariant]
+runs = 128
+depth = 64
+fail_on_revert = false
+
+[rpc_endpoints]
+dmd_mainnet = "https://rpc.bit.diamonds"
+
+[etherscan]
+dmd_mainnet = { key = "blockscout", url = "https://explorer.bit.diamonds/api", chain = 17771 }

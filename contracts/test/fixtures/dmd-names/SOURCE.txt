@@ -1,0 +1,1 @@
+DMDcoin/diamond-contracts-registry e37c37600bcfa5af2b0099812d33ab7737f4bdbd (v1.0.0)
