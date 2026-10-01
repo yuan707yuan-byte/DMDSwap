@@ -25,11 +25,12 @@ function Shell() {
         {tab === 'send' && <SendView />}
         {tab === 'pools' && <PoolsView />}
       </main>
-      <footer className="footer">
-        <span>Swaps cost 0.30%: half goes to liquidity providers, half to DMDSwap.</span>
-        {IS_DEPLOYED && <a className="link" href={`${EXPLORER_URL}/address/${ADDRESSES.router}`} target="_blank" rel="noreferrer noopener">Verify the contracts on the DMD explorer</a>}
-        {IS_DEPLOYED && <a className="link" href={`${EXPLORER_URL}/address/${ADDRESSES.timelock}`} target="_blank" rel="noreferrer noopener">Pending admin changes (24h timelock)</a>}
-      </footer>
+      {IS_DEPLOYED && (
+        <footer className="footer">
+          <a className="link" href={`${EXPLORER_URL}/address/${ADDRESSES.router}`} target="_blank" rel="noreferrer noopener">Verify the contracts on the DMD explorer</a>
+          <a className="link" href={`${EXPLORER_URL}/address/${ADDRESSES.timelock}`} target="_blank" rel="noreferrer noopener">Pending admin changes (24h timelock)</a>
+        </footer>
+      )}
       <Toasts />
     </>
   )
