@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { TokenBadge } from '../components/Brand'
+import { TokenIcon } from '../components/Brand'
 import { usePoolTokens } from '../hooks/usePoolTokens'
 import { ADDRESSES, EXPLORER_URL, IS_DEPLOYED } from '../lib/config'
 import { formatAmount, formatBps, shortAddress } from '../lib/format'
@@ -46,7 +46,7 @@ export function PoolsView() {
                 return (
                   <tr key={p.pair}>
                     <td>
-                      <span className="pair-badges"><TokenBadge symbol={t0.symbol} size={22} /><TokenBadge symbol={t1.symbol} size={22} /></span>
+                      <span className="pair-badges"><TokenIcon token={t0} size={22} /><TokenIcon token={t1} size={22} /></span>
                       <a className="pair-name" href={`${EXPLORER_URL}/address/${p.pair}`} target="_blank" rel="noreferrer noopener">{t0.symbol}/{t1.symbol}</a>
                       {(isUnverified(t0) || isUnverified(t1)) && <small className="unverified-note" title="Contains a token that isn’t on the DMDSwap default list">Unlisted token {shortAddress(isUnverified(t0) ? p.token0 : p.token1)}</small>}
                     </td>

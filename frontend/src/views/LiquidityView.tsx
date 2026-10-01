@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Address } from 'viem'
 import { AmountField } from '../components/AmountField'
-import { TokenBadge } from '../components/Brand'
+import { TokenIcon } from '../components/Brand'
 import { useBalance } from '../hooks/useBalance'
 import { usePoolTokens } from '../hooks/usePoolTokens'
 import { ADDRESSES, IS_DEPLOYED } from '../lib/config'
@@ -168,7 +168,7 @@ function PositionRow({ pool, t0, t1, onRemove }: { pool: Pool; t0: Token; t1: To
   return (
     <li className="position">
       <div className="position-head">
-        <span className="pair-badges"><TokenBadge symbol={t0.symbol} /><TokenBadge symbol={t1.symbol} /></span>
+        <span className="pair-badges"><TokenIcon token={t0} /><TokenIcon token={t1} /></span>
         <strong>{t0.symbol}/{t1.symbol}</strong>
         <span className="muted">{formatBps(shareBps)} of pool</span>
       </div>

@@ -2,12 +2,14 @@ import { getAddress, isAddress, type Address } from 'viem'
 import { erc20Abi } from '../abi/generated'
 import { publicClient } from './client'
 import { ADDRESSES, CHAIN_ID } from './config'
+import { CORE_LOGOS, OFFICIAL_ADDRESSES, OFFICIAL_SYMBOLS } from './officialTokens'
 import type { Token } from './types'
 
-export const DMD: Token = { address: 'native', symbol: 'DMD', name: 'DMD Diamond', decimals: 18, source: 'native' }
-export const WDMD: Token = { address: ADDRESSES.wdmd, symbol: 'WDMD', name: 'Wrapped DMD', decimals: 18, source: 'core' }
+export const DMD: Token = { address: 'native', symbol: 'DMD', name: 'DMD Diamond', decimals: 18, source: 'native', ...(CORE_LOGOS.DMD ? { logo: CORE_LOGOS.DMD } : {}) }
+export const WDMD: Token = { address: ADDRESSES.wdmd, symbol: 'WDMD', name: 'Wrapped DMD', decimals: 18, source: 'core', ...(CORE_LOGOS.WDMD ? { logo: CORE_LOGOS.WDMD } : {}) }
 export const CORE_TOKENS: Token[] = [DMD, WDMD]
-const RESERVED_SYMBOLS = new Set(['DMD', 'WDMD'])
+/** Symbols an imported look-alike may not use without a "?" mark: DMD, WDMD and every official token. */
+const RESERVED_SYMBOLS = new Set(['DMD', 'WDMD', ...OFFICIAL_SYMBOLS])
 
 export const tokenKey = (t: Token) => (t.address === 'native' ? 'native' : t.address.toLowerCase())
 export const sameToken = (a: Token | null, b: Token | null) => !!a && !!b && tokenKey(a) === tokenKey(b)
@@ -26,7 +28,8 @@ export async function fetchTokenMeta(address: Address, source: Token['source'] =
   const d = Number(decimals)
   if (!Number.isInteger(d) || d < 0 || d > 36) throw new Error('This contract reports an invalid number of decimals.')
   let sym = clean(symbol, 12)
-  if (RESERVED_SYMBOLS.has(sym.toUpperCase()) && address.toLowerCase() !== ADDRESSES.wdmd.toLowerCase()) sym = `${sym}?`
+  const lower = address.toLowerCase()
+  if (RESERVED_SYMBOLS.has(sym.toUpperCase()) && lower !== ADDRESSES.wdmd.toLowerCase() && !OFFICIAL_ADDRESSES.has(lower)) sym = `${sym}?`
   return { address: getAddress(address), symbol: sym, name: clean(name, 40), decimals: d, source }
 }
 
@@ -40,7 +43,8 @@ export function loadImportedTokens(): Token[] {
       .filter((t): t is Token =>
         !!t && typeof t === 'object' && isAddress((t as Token).address as string) &&
         typeof (t as Token).symbol === 'string' && Number.isInteger((t as Token).decimals))
-      .map((t) => ({ ...t, symbol: clean(t.symbol, 13), name: clean(t.name, 40), source: 'imported' as const }))
+      .filter((t) => !OFFICIAL_ADDRESSES.has(String(t.address).toLowerCase())) // now on the official list
+      .map((t) => ({ address: t.address, symbol: clean(t.symbol, 13), name: clean(t.name, 40), decimals: t.decimals, source: 'imported' as const }))
   } catch {
     return []
   }

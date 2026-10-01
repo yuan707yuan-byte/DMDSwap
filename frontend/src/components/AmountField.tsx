@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { formatAmount, sanitizeAmountInput } from '../lib/format'
 import { isUnverified } from '../lib/tokens'
 import type { Token } from '../lib/types'
-import { TokenBadge } from './Brand'
+import { TokenIcon } from './Brand'
 import { TokenPicker } from './TokenPicker'
 
 export function AmountField(props: {
@@ -43,7 +43,7 @@ export function AmountField(props: {
           onChange={(e) => onValue(sanitizeAmountInput(e.target.value))}
         />
         <button className={`token-btn${token ? '' : ' token-btn-empty'}`} onClick={() => setPicking(true)}>
-          {token ? <><TokenBadge symbol={token.symbol} size={22} /><span>{token.symbol}</span>{isUnverified(token) && <span className="unverified" title="Imported token: verify its address">!</span>}</> : 'Select token'}
+          {token ? <><TokenIcon token={token} size={22} /><span>{token.symbol}</span>{isUnverified(token) && <span className="unverified" title="Imported token: verify its address">!</span>}</> : 'Select token'}
           <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>
         </button>
       </div>

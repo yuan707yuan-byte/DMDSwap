@@ -5,8 +5,10 @@ export type Token = {
   symbol: string
   name: string
   decimals: number
-  /** native/core are built in; imported/pool tokens are unverified and show warnings */
-  source: 'native' | 'core' | 'imported' | 'pool'
+  /** native/core/official are trusted (no warnings); imported/pool tokens are unverified and show warnings */
+  source: 'native' | 'core' | 'official' | 'imported' | 'pool'
+  /** same-site logo path, e.g. /tokens/abc.png */
+  logo?: string
 }
 
 export type RecipientMode = 'self' | 'address' | 'name'

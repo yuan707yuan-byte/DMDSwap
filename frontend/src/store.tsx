@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getAddress, type Address, type Hash } from 'viem'
+import { erc20Abi } from './abi/generated'
 import { makeWalletClient, publicClient, type WalletClient } from './lib/client'
 import { CHAIN_ID, IS_DEPLOYED, LIMITS } from './lib/config'
 import { friendlyError } from './lib/errors'
 import { activeNameOf } from './lib/resolve'
+import { OFFICIAL_ADDRESSES, OFFICIAL_TOKENS } from './lib/officialTokens'
 import { CORE_TOKENS, loadImportedTokens, saveImportedTokens, tokenKey } from './lib/tokens'
 import { simulateAndSend, waitFinal, type ContractCall } from './lib/tx'
 import type { Token } from './lib/types'
@@ -75,6 +77,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [rpcDown, setRpcDown] = useState(false)
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [imported, setImported] = useState<Token[]>(loadImportedTokens)
+  const [official, setOfficial] = useState<Token[]>(OFFICIAL_TOKENS)
   const [refreshKey, setRefreshKey] = useState(0)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [tab, setTab] = useState<Tab>('swap')
@@ -176,14 +179,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // Safety net for the official list: hide any entry whose decimals don't match the chain (amounts would be
+  // wrong by orders of magnitude) or whose address has no contract. Network hiccups keep the token.
+  useEffect(() => {
+    if (!IS_DEPLOYED || OFFICIAL_TOKENS.length === 0) return
+    let live = true
+    Promise.all(OFFICIAL_TOKENS.map(async (t) => {
+      const address = t.address as Address
+      try {
+        const d = await publicClient.readContract({ address, abi: erc20Abi, functionName: 'decimals' })
+        if (Number(d) === t.decimals) return t
+        console.error(`[DMDSwap] official token ${t.symbol}: list says ${t.decimals} decimals, chain says ${d}. Hidden.`)
+        return null
+      } catch {
+        const code = await publicClient.getCode({ address }).catch(() => 'unknown')
+        if (code === undefined || code === '0x') {
+          console.error(`[DMDSwap] official token ${t.symbol}: no contract at ${address}. Hidden.`)
+          return null
+        }
+        return t
+      }
+    })).then((list) => live && setOfficial(list.filter((t): t is Token => t !== null)))
+    return () => {
+      live = false
+    }
+  }, [])
+
   const tokens = useMemo(() => {
     const seen = new Set<string>()
-    return [...CORE_TOKENS, ...imported].filter((t) => (seen.has(tokenKey(t)) ? false : (seen.add(tokenKey(t)), true)))
-  }, [imported])
+    return [...CORE_TOKENS, ...official, ...imported].filter((t) => (seen.has(tokenKey(t)) ? false : (seen.add(tokenKey(t)), true)))
+  }, [official, imported])
 
   const addToken = useCallback((t: Token) => {
     setImported((prev) => {
       if (prev.some((x) => tokenKey(x) === tokenKey(t)) || CORE_TOKENS.some((x) => tokenKey(x) === tokenKey(t))) return prev
+      if (t.address !== 'native' && OFFICIAL_ADDRESSES.has(t.address.toLowerCase())) return prev
       const next = [...prev, { ...t, source: 'imported' as const }]
       saveImportedTokens(next)
       return next

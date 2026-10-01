@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import type { Address } from 'viem'
+import type { Token } from '../lib/types'
 
 /** Original brilliant-cut mark for DMDSwap. */
 export function Logo({ size = 28 }: { size?: number }) {
@@ -31,4 +33,16 @@ export function TokenBadge({ symbol, size = 26 }: { symbol: string; size?: numbe
       {symbol.slice(0, 1)}
     </span>
   )
+}
+
+/** Token logo from public/tokens (same site only), falling back to the letter badge if missing or broken. */
+export function TokenIcon({ token, size = 26 }: { token: Token; size?: number }) {
+  const [failed, setFailed] = useState<string | null>(null)
+  if (token.logo && failed !== token.logo) {
+    return (
+      <img className="token-logo" src={token.logo} alt="" width={size} height={size} loading="lazy" decoding="async"
+        onError={() => setFailed(token.logo ?? null)} />
+    )
+  }
+  return <TokenBadge symbol={token.symbol} size={size} />
 }

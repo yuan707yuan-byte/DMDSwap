@@ -214,7 +214,8 @@ a.mono-addr:hover { color: var(--ice); }
 .position-head { display: flex; align-items: center; gap: 10px; }
 .position-head .muted { margin-left: auto; font-size: 13px; }
 .pair-badges { display: inline-flex; }
-.pair-badges .token-badge + .token-badge { margin-left: -8px; box-shadow: 0 0 0 2px var(--surface); }
+.token-logo { border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--surface-2); }
+.pair-badges > * + * { margin-left: -8px; box-shadow: 0 0 0 2px var(--surface); }
 .wide-panel { width: 100%; max-width: 880px; }
 .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .table-scroll { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: 14px; }

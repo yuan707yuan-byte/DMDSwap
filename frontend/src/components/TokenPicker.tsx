@@ -6,7 +6,7 @@ import { fetchTokenMeta, isUnverified, tokenKey } from '../lib/tokens'
 import type { Token } from '../lib/types'
 import { readBalance } from '../hooks/useBalance'
 import { useApp } from '../store'
-import { TokenBadge } from './Brand'
+import { TokenIcon } from './Brand'
 import { Modal } from './Modal'
 
 export function TokenPicker({ onPick, onClose, exclude }: { onPick: (t: Token) => void; onClose: () => void; exclude?: Token | null }) {
@@ -57,7 +57,7 @@ export function TokenPicker({ onPick, onClose, exclude }: { onPick: (t: Token) =
           return (
             <li key={tokenKey(t)}>
               <button className="token-row" disabled={disabled} onClick={() => onPick(t)}>
-                <TokenBadge symbol={t.symbol} />
+                <TokenIcon token={t} />
                 <span className="token-row-text">
                   <strong>{t.symbol}</strong>
                   <small>{t.name}{isUnverified(t) && t.address !== 'native' ? ` · ${shortAddress(t.address)}` : ''}</small>
@@ -73,7 +73,7 @@ export function TokenPicker({ onPick, onClose, exclude }: { onPick: (t: Token) =
       {candidate && candidate.address !== 'native' && (
         <div className="import-box">
           <div className="token-row static">
-            <TokenBadge symbol={candidate.symbol} />
+            <TokenIcon token={candidate} />
             <span className="token-row-text">
               <strong>{candidate.symbol}</strong>
               <small>{candidate.name}</small>
