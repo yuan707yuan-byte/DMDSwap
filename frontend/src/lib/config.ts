@@ -6,9 +6,11 @@ export const RPC_URL = 'https://rpc.bit.diamonds'
 export const EXPLORER_URL = 'https://explorer.bit.diamonds'
 export const NAMES_APP_URL = 'https://ui.bit.diamonds/names'
 
+// Footer links (open in a new tab).
 export const SOCIAL_LINKS = [
   { label: 'X', href: 'https://x.com/DMDSwap' },
   { label: 'Telegram', href: 'https://t.me/DMDSwap' },
+  { label: 'DOCS Guide', href: '/docs/DMDSwap_Document_Guide.pdf' },
 ] as const
 
 export const dmdChain = defineChain({
