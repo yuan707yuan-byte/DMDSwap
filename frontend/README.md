@@ -3,37 +3,6 @@
 Swap, provide liquidity and pay **DMD Names** on DMD Diamond (chain 17771).
 React 19 + viem 2 + Vite 7, three runtime dependencies, no third-party scripts, fonts or trackers.
 
-## Deploy to Vercel
-
-1. **Deploy the contracts first** (see `../contracts/README.md`). The deploy script writes
-   `contracts/deployments/dmd-mainnet.json`.
-2. **Push this repository to GitHub/GitLab** and import it in Vercel. Set **Root Directory** to `frontend`.
-   Vercel reads `vercel.json` (framework, build command, output dir, security headers) automatically.
-3. **Add the contract addresses** as Production environment variables (Project → Settings → Environment Variables):
-
-   | Variable | From `deployments/dmd-mainnet.json` |
-   |---|---|
-   | `VITE_FACTORY` | `factory` |
-   | `VITE_ROUTER` | `router` |
-   | `VITE_NAME_ROUTER` | `nameRouter` |
-   | `VITE_NAME_RESOLVER` | `nameResolver` |
-   | `VITE_WDMD` | `wdmd` |
-   | `VITE_TIMELOCK` | `timelock` |
-
-   (Alternatively paste the JSON into `src/deployment.json` and commit it.)
-4. **Deploy.** Until the addresses are set, the site loads and shows a configuration notice; nothing can be traded.
-
-CLI alternative: `cd frontend && npx vercel --prod` (then add the env vars and run it again).
-
-## Local development
-```bash
-npm ci
-npm run dev        # http://localhost:5173
-npm test           # 28 tests: swap math vs. Solidity reference vectors, DMD Name rules
-npm run build      # typecheck + production build into dist/
-npm run sync-abi   # regenerate src/abi/generated.ts after changing contracts (needs `forge build`)
-```
-
 ## What users get
 - **Swap** with live prices recomputed every block, best route (direct or via WDMD), price impact,
   minimum received / maximum spent, fee breakdown (0.15% to LPs, 0.15% to DMDSwap) and wrap/unwrap.
