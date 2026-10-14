@@ -1,35 +1,7 @@
-# DMDSwap — Web app
+# DMDSwap — First Dex Exchange on DMD Diamond Blockchain.
 
 Swap, provide liquidity and pay **DMD Names** on DMD Diamond (chain 17771).
 React 19 + viem 2 + Vite 7, three runtime dependencies, no third-party scripts, fonts or trackers.
-
-## Deploy to Vercel
-
-This folder is ready to deploy: the DMDSwap mainnet contract addresses are already in `src/deployment.json`, and
-the DMD/WDMD logos and the official token list (`src/official-tokens.json`) are included.
-
-1. **Create a new GitHub repository** and upload the *contents* of this folder to its top level (so `package.json`
-   and `vercel.json` sit at the top, next to `src` and `public`).
-2. **Import the repository in Vercel** (Add New → Project). Vercel reads `vercel.json` automatically (framework,
-   build command, output folder, security headers). Leave Root Directory empty and add no environment variables.
-3. **Deploy.** Every later commit to GitHub redeploys the site automatically.
-
-Mainnet contracts (also in `src/deployment.json`): factory `0x05f50BE1EC5c53E5AC2e48852b095bb2DFA4BDCF`,
-router `0x8B9AaCF84AFFf11e2A318f5f4EA35D25E660B9C9`, name router `0x3c662C84C2DD082b7bD9c1035dE693180dC71626`,
-name resolver `0x1e97275cfe4D4F3FA3D2019Ce23DB7573b9284F0`, official WDMD `0x2B1Bb4D22309af4330C216D797298b63Dbe97eA6`.
-
-Environment variables `VITE_FACTORY`, `VITE_ROUTER`, `VITE_NAME_ROUTER` and `VITE_NAME_RESOLVER` override
-`src/deployment.json` if set in Vercel, so only set them if the contracts move. If the site ever shows a notice that
-the contracts don't match and blocks trading, an old address is set somewhere.
-
-## Local development
-```bash
-npm ci
-npm run dev        # http://localhost:5173
-npm test           # 28 tests: swap math vs. Solidity reference vectors, DMD Name rules
-npm run build      # typecheck + production build into dist/
-npm run sync-abi   # regenerate src/abi/generated.ts after changing contracts (needs `forge build`)
-```
 
 ## What users get
 - **Swap** with live prices recomputed every block, best route (direct or via WDMD), price impact,
