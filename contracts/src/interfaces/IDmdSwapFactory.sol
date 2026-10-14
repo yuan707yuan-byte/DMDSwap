@@ -2,22 +2,33 @@
 pragma solidity 0.8.25;
 
 interface IDmdSwapFactory {
+    /// @notice Everything a pair needs for one swap, read in a single call.
+    /// @dev `daoFeeTo` is already resolved: while no DAO fee wallet is set it equals `adminFeeTo`.
+    struct SwapConfig {
+        bool paused;
+        uint16 feeBps;
+        address adminFeeTo;
+        uint16 adminShareBps;
+        address daoFeeTo;
+        uint16 daoShareBps;
+    }
+
     event PairCreated(address indexed token0, address indexed token1, address pair, uint256 pairCount);
-    event FeeToUpdated(address indexed previousFeeTo, address indexed newFeeTo);
+    event AdminUpdated(address indexed previousAdmin, address indexed newAdmin);
+    event DaoFeeToUpdated(address indexed previousDaoFeeTo, address indexed newDaoFeeTo);
     event SwapFeeUpdated(uint16 previousFeeBps, uint16 newFeeBps);
-    event ProtocolFeeShareUpdated(uint16 previousShareBps, uint16 newShareBps);
-    event GuardianUpdated(address indexed previousGuardian, address indexed newGuardian);
+    event FeeSharesUpdated(uint16 adminShareBps, uint16 daoShareBps);
     event SwapsPaused(address indexed by);
     event SwapsUnpaused(address indexed by);
 
     function pairBeacon() external view returns (address);
-    function feeTo() external view returns (address);
-    function guardian() external view returns (address);
+    function admin() external view returns (address);
+    function daoFeeTo() external view returns (address);
     function swapFeeBps() external view returns (uint16);
-    function protocolFeeShareBps() external view returns (uint16);
+    function adminShareBps() external view returns (uint16);
+    function daoShareBps() external view returns (uint16);
     function swapsPaused() external view returns (bool);
-    function swapConfig() external view returns (bool paused, uint16 feeBps, address feeRecipient, uint16 shareBps);
-    function protocolFeeConfig() external view returns (address feeRecipient, uint16 shareBps);
+    function swapConfig() external view returns (SwapConfig memory);
 
     function getPair(address tokenA, address tokenB) external view returns (address pair);
     function allPairs(uint256 index) external view returns (address pair);

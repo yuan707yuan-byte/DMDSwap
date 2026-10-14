@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IDmdSwapFactory} from "../interfaces/IDmdSwapFactory.sol";
 import {IDmdSwapPair} from "../interfaces/IDmdSwapPair.sol";
 import {IWDMD} from "../interfaces/IWDMD.sol";
+import {DmdNativeUnwrapper} from "./DmdNativeUnwrapper.sol";
 import {DmdSwapLibrary} from "../libraries/DmdSwapLibrary.sol";
 
 /// @title DmdSwapRouterBase
@@ -16,6 +17,8 @@ import {DmdSwapLibrary} from "../libraries/DmdSwapLibrary.sol";
 ///        - exact-input swaps MUST set amountOutMin > 0 (unprotected swaps are rejected outright);
 ///        - exact-output swaps are bounded by amountInMax;
 ///        - tokens are only ever pulled from msg.sender, never from an arbitrary `from`.
+///      Native DMD payouts go through DmdNativeUnwrapper (see there: WETH9-style wrappers pay with a 2,300-gas
+///      stipend, which a proxy can only receive while its storage is warm). The routers never hold native DMD.
 abstract contract DmdSwapRouterBase {
     using SafeERC20 for IERC20;
 
@@ -27,8 +30,7 @@ abstract contract DmdSwapRouterBase {
     error ExcessiveInputAmount(uint256 amountIn, uint256 amountInMax);
     error InvalidPath();
     error DMDTransferFailed();
-    error OnlyWDMD();
-    error NotAContract(address account);
+    error UnwrapperMismatch();
 
     modifier ensure(uint256 deadline) {
         if (deadline < block.timestamp) revert Expired(deadline, block.timestamp);
@@ -37,13 +39,14 @@ abstract contract DmdSwapRouterBase {
 
     function _factoryAddr() internal view virtual returns (address);
     function _wdmdAddr() internal view virtual returns (address);
+    function _unwrapperAddr() internal view virtual returns (address);
 
     function _feeBps() internal view returns (uint256) {
         return IDmdSwapFactory(_factoryAddr()).swapFeeBps();
     }
 
     function _checkRecipient(address to) internal view {
-        if (to == address(0) || to == address(this)) revert InvalidRecipient(to);
+        if (to == address(0) || to == address(this) || to == _unwrapperAddr()) revert InvalidRecipient(to);
     }
 
     function _requireSlippageProtection(uint256 amountOutMin) internal pure {
@@ -146,8 +149,24 @@ abstract contract DmdSwapRouterBase {
         _swapSupportingFeeOnTransferTokens(path, address(this));
         received = IERC20(wdmd).balanceOf(address(this)) - balanceBefore;
         if (received < amountOutMin) revert InsufficientOutputAmount(received, amountOutMin);
-        IWDMD(wdmd).withdraw(received);
-        _safeTransferDMD(to, received);
+        _unwrapFromRouter(to, received);
+    }
+
+    /// @dev Pays `amount` native DMD to `to` from WDMD held by this router.
+    ///      The swap output is collected HERE (never sent straight into the unwrapper) and the unwrapper can only
+    ///      pull WDMD from its caller, so no other contract or token hook can ever reach a user's output.
+    function _unwrapFromRouter(address to, uint256 amount) internal {
+        DmdNativeUnwrapper(payable(_unwrapperAddr())).unwrapTo(to, amount);
+    }
+
+    /// @dev Initializer helper: the unwrapper must be wired to the same WDMD as the router; approves it once.
+    ///      The approval is harmless between transactions: the router holds no WDMD then, and the unwrapper
+    ///      only pulls from its caller.
+    function _setUpUnwrapper(address wdmd, address unwrapper) internal {
+        if (unwrapper.code.length == 0 || DmdNativeUnwrapper(payable(unwrapper)).WDMD() != wdmd) {
+            revert UnwrapperMismatch();
+        }
+        IERC20(wdmd).forceApprove(unwrapper, type(uint256).max);
     }
 
     function _safeTransferDMD(address to, uint256 value) internal {

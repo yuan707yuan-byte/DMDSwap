@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.25;
 
-import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {DmdSwapOwnable} from "../governance/DmdSwapOwnable.sol";
 
 import {IDmdNameResolver} from "../interfaces/IDmdNameResolver.sol";
 import {
@@ -25,7 +23,7 @@ import {
 ///        7. the name is not blocked by DAO moderation
 ///      All external reads are gas-capped staticcalls with strict return-data validation, so a
 ///      faulty/upgraded DMD contract can only make resolution fail closed — never revert or mis-resolve.
-contract DmdNameResolver is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, IDmdNameResolver {
+contract DmdNameResolver is DmdSwapOwnable, IDmdNameResolver {
     /// @notice namehash("dmd") — NameUtils.DMD_NODE in the official registry.
     bytes32 public constant DMD_NODE = 0x9904bf4b5751e3b6a8b75d14c49424160de1a8fa8a90fd5c9fccdeac0503e612;
     uint256 public constant MIN_NAME_LENGTH = 2;
@@ -47,8 +45,6 @@ contract DmdNameResolver is Initializable, UUPSUpgradeable, Ownable2StepUpgradea
     event NamesSystemUpdated(address indexed controller, address indexed names, address indexed registry);
     event ResolutionEnabled(bool enabled);
 
-    error ZeroAddress();
-    error NotAContract(address account);
     error InconsistentNamesSystem();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -56,19 +52,16 @@ contract DmdNameResolver is Initializable, UUPSUpgradeable, Ownable2StepUpgradea
         _disableInitializers();
     }
 
-    /// @param owner_      24h TimelockController.
+    /// @param owner_      The DMD DAO.
     /// @param controller_ DMDRegistrarController proxy (mainnet: 0x04847f99aD1312aFFB1cc6A03a53FEB5fEdd282B).
     function initialize(address owner_, address controller_) external initializer {
-        if (owner_ == address(0)) revert ZeroAddress();
-        __Ownable_init(owner_);
-        __Ownable2Step_init();
-        __UUPSUpgradeable_init();
+        __DmdSwapOwnable_init(owner_);
         _setController(controller_);
         _s().enabled = true;
         emit ResolutionEnabled(true);
     }
 
-    // ─────────────────────────────────────────────── governance
+    // ─────────────────────────────────────────────── governance (DAO only)
 
     /// @notice Re-point to a new DMD registrar controller (e.g. after a DMD DAO migration).
     function setController(address controller_) external onlyOwner {
@@ -221,10 +214,6 @@ contract DmdNameResolver is Initializable, UUPSUpgradeable, Ownable2StepUpgradea
 
     function _isAlphaNum(bytes1 c) private pure returns (bool) {
         return (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39); // a-z | 0-9
-    }
-
-    function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
-        if (newImplementation.code.length == 0) revert NotAContract(newImplementation);
     }
 
     function _s() private pure returns (ResolverStorage storage $) {

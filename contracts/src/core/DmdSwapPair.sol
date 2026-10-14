@@ -19,8 +19,9 @@ import {IDmdSwapCallee} from "../interfaces/IDmdSwapCallee.sol";
 ///   - Read-only-reentrancy guard: getReserves() reverts while the pair is mid-operation.
 ///   - Swaps/mints obey the factory pause; burns (LP exits) are NEVER pausable.
 ///   - MINIMUM_LIQUIDITY locked at 0x…dEaD (OZ ERC20 forbids minting to address(0)).
-///   - Protocol fee paid DIRECTLY per swap (not lazily minted as LP): of the fee the trader pays,
-///     `shareBps` (default 50 %) is transferred to `feeTo` in the input token; the rest stays for LPs.
+///   - Protocol fee paid DIRECTLY per swap (not lazily minted as LP), in the input token: of the fee the
+///     trader pays, `adminShareBps` (default 25 %) goes to the admin wallet and `daoShareBps` (default 25 %)
+///     to the DAO fee wallet (the admin while it is unset); the rest (default 50 %) stays in the pool for LPs.
 /// @dev Deployed behind BeaconProxy. All state lives in ERC-7201 namespaced storage (upgrade-safe).
 contract DmdSwapPair is ERC20PermitUpgradeable, ReentrancyGuardUpgradeable, IDmdSwapPair {
     using SafeERC20 for IERC20;
@@ -157,17 +158,16 @@ contract DmdSwapPair is ERC20PermitUpgradeable, ReentrancyGuardUpgradeable, IDmd
 
     function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external nonReentrant {
         PairStorage storage $ = _s();
-        (uint16 feeBps, address feeTo, uint16 shareBps) = _swapConfigIfNotPaused($);
+        IDmdSwapFactory.SwapConfig memory cfg = _swapConfigIfNotPaused($);
         if (amount0Out == 0 && amount1Out == 0) revert InsufficientOutputAmount();
         if (amount0Out >= $.reserve0 || amount1Out >= $.reserve1) revert InsufficientLiquidity();
 
         (uint256 balance0, uint256 balance1) = _sendOut($, amount0Out, amount1Out, to, data);
         // 1) full-fee K check on the trader's payment (identical to the quote math in DmdSwapLibrary)
-        (uint256 amount0In, uint256 amount1In) = _inputsAndCheckK($, balance0, balance1, amount0Out, amount1Out, feeBps);
-        // 2) pay the protocol share of the fee directly to feeTo; LPs keep the rest in the pool
-        if (feeTo != address(0) && shareBps != 0) {
-            (balance0, balance1) = _payProtocolFee($, amount0In, amount1In, feeBps, feeTo, shareBps, balance0, balance1);
-        }
+        (uint256 amount0In, uint256 amount1In) =
+            _inputsAndCheckK($, balance0, balance1, amount0Out, amount1Out, cfg.feeBps);
+        // 2) pay the admin and DAO shares of the fee directly; LPs keep the rest in the pool
+        (balance0, balance1) = _payProtocolFees($, cfg, amount0In, amount1In, balance0, balance1);
 
         _update(balance0, balance1);
         emit Swap(msg.sender, amount0In, amount1In, amount0Out, amount1Out, to);
@@ -233,44 +233,60 @@ contract DmdSwapPair is ERC20PermitUpgradeable, ReentrancyGuardUpgradeable, IDmd
     function _swapConfigIfNotPaused(PairStorage storage $)
         private
         view
-        returns (uint16 feeBps, address feeTo, uint16 shareBps)
+        returns (IDmdSwapFactory.SwapConfig memory cfg)
     {
-        bool paused;
-        (paused, feeBps, feeTo, shareBps) = IDmdSwapFactory($.factory).swapConfig();
-        if (paused) revert Paused();
+        cfg = IDmdSwapFactory($.factory).swapConfig();
+        if (cfg.paused) revert Paused();
     }
 
-    /// @dev protocolFee_i = amountIn_i * feeBps * shareBps / 1e8 (rounded down => never more than the share).
-    ///      Since shareBps <= 10_000, the protocol cut is always <= the fee the K-check already charged, so
-    ///      k cannot decrease; this is re-verified on the real post-transfer balances.
-    ///      If a token refuses the transfer (e.g. it blacklists feeTo), the swap still succeeds and that
-    ///      fee simply stays with LPs — a misbehaving token can never brick its pool.
-    function _payProtocolFee(
+    /// @dev share_i = amountIn_i * feeBps * shareBps / 1e8, rounded down (never more than the share).
+    ///      admin + DAO share <= 50 % of the fee (factory-enforced), so the protocol cut is always smaller than
+    ///      the fee the K-check already charged and k cannot decrease; re-verified on the real balances below.
+    ///      If the DAO wallet is unset it resolves to the admin, and both shares go out in ONE transfer.
+    ///      A token that refuses a transfer (e.g. it blacklists a fee wallet) never bricks its pool: that share
+    ///      simply stays with the LPs and the swap succeeds.
+    function _payProtocolFees(
         PairStorage storage $,
+        IDmdSwapFactory.SwapConfig memory cfg,
         uint256 amount0In,
         uint256 amount1In,
-        uint256 feeBps,
-        address feeTo,
-        uint256 shareBps,
         uint256 balance0,
         uint256 balance1
     ) private returns (uint256, uint256) {
-        uint256 fee0 = (amount0In * feeBps * shareBps) / (BPS * BPS);
-        uint256 fee1 = (amount1In * feeBps * shareBps) / (BPS * BPS);
-        bool paid = false;
-        if (fee0 != 0 && _tryTransfer($.token0, feeTo, fee0)) {
-            emit ProtocolFeePaid($.token0, feeTo, fee0);
-            paid = true;
-        }
-        if (fee1 != 0 && _tryTransfer($.token1, feeTo, fee1)) {
-            emit ProtocolFeePaid($.token1, feeTo, fee1);
-            paid = true;
+        bool paid;
+        if (cfg.daoFeeTo == cfg.adminFeeTo) {
+            paid = _payShare($, cfg.adminFeeTo, uint256(cfg.adminShareBps) + cfg.daoShareBps, cfg.feeBps, amount0In, amount1In);
+        } else {
+            bool paidAdmin = _payShare($, cfg.adminFeeTo, cfg.adminShareBps, cfg.feeBps, amount0In, amount1In);
+            bool paidDao = _payShare($, cfg.daoFeeTo, cfg.daoShareBps, cfg.feeBps, amount0In, amount1In);
+            paid = paidAdmin || paidDao;
         }
         if (!paid) return (balance0, balance1);
         balance0 = IERC20($.token0).balanceOf(address(this));
         balance1 = IERC20($.token1).balanceOf(address(this));
         if (balance0 * balance1 < uint256($.reserve0) * $.reserve1) revert KInvariant();
         return (balance0, balance1);
+    }
+
+    function _payShare(
+        PairStorage storage $,
+        address to,
+        uint256 shareBps,
+        uint256 feeBps,
+        uint256 amount0In,
+        uint256 amount1In
+    ) private returns (bool paid) {
+        if (shareBps == 0 || to == address(0)) return false;
+        uint256 fee0 = (amount0In * feeBps * shareBps) / (BPS * BPS);
+        uint256 fee1 = (amount1In * feeBps * shareBps) / (BPS * BPS);
+        if (fee0 != 0 && _tryTransfer($.token0, to, fee0)) {
+            emit ProtocolFeePaid($.token0, to, fee0);
+            paid = true;
+        }
+        if (fee1 != 0 && _tryTransfer($.token1, to, fee1)) {
+            emit ProtocolFeePaid($.token1, to, fee1);
+            paid = true;
+        }
     }
 
     /// @dev Non-reverting ERC-20 transfer (tokens with or without a bool return). Copies at most 32

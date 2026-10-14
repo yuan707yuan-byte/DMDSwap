@@ -1,33 +1,39 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.25;
 
-import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {BeaconProxy} from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 
+import {DmdSwapOwnable} from "../governance/DmdSwapOwnable.sol";
 import {IDmdSwapFactory} from "../interfaces/IDmdSwapFactory.sol";
 import {IDmdSwapPair} from "../interfaces/IDmdSwapPair.sol";
 
 /// @title DmdSwapFactory
-/// @notice Creates/indexes pairs and holds global, hard-bounded fee parameters.
-/// @dev UUPS-upgradeable; owner MUST be the 24h TimelockController. Pairs are BeaconProxies whose logic
-///      is upgraded via the UpgradeableBeacon (also owned by the timelock).
-///      Fee model: trader pays `swapFeeBps` (default 0.30 %). `protocolFeeShareBps` of it (default 50 %)
-///      is transferred DIRECTLY to `feeTo` (the admin) inside every swap; the rest stays in the pool for LPs.
-///      Hard limits: swap fee <= 1 %, protocol share <= 50 % of the swap fee.
-///      Pause halts swaps / adds / pair creation ONLY — removing liquidity can never be paused.
-contract DmdSwapFactory is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, IDmdSwapFactory {
+/// @notice Creates/indexes pairs and holds the hard-bounded fee settings and the emergency pause.
+///
+/// Fee model (from the first swap): the trader pays `swapFeeBps` of the input (default 0.30 %). Of that fee:
+///   - `adminShareBps` (default 25 % = 0.075 % of the trade) is paid directly to the admin wallet,
+///   - `daoShareBps`   (default 25 % = 0.075 % of the trade) is paid directly to the DAO fee wallet,
+///   - the rest (default 50 % = 0.15 % of the trade) stays in the pool and grows every LP position.
+///   While no DAO fee wallet is set, the DAO share is paid to the admin wallet instead.
+///   Hard limits: swap fee <= 1 %; admin + DAO share <= 50 % of the fee (LPs always keep at least half).
+///
+/// Roles:
+///   - owner (the DMD DAO, via proposals): upgrades, fee rates, unpause, replacing the admin, ownership transfer.
+///   - admin (a wallet): emergency pause (instant), set/replace the DAO fee wallet, hand the admin role to a new
+///     wallet. The admin can never upgrade code, change fee rates or unpause.
+///   Pause halts swaps / adds / pair creation ONLY — removing liquidity can never be paused.
+contract DmdSwapFactory is DmdSwapOwnable, IDmdSwapFactory {
     uint16 public constant MAX_SWAP_FEE_BPS = 100;
-    uint16 public constant MAX_PROTOCOL_FEE_SHARE_BPS = 5_000;
+    uint16 public constant MAX_PROTOCOL_SHARE_BPS = 5_000;
 
     /// @custom:storage-location erc7201:dmdswap.storage.Factory
     struct FactoryStorage {
         address pairBeacon;
-        address feeTo;
-        address guardian;
+        address admin;
+        address daoFeeTo; // address(0) = not set yet => DAO share is paid to `admin`
         uint16 swapFeeBps;
-        uint16 protocolFeeShareBps;
+        uint16 adminShareBps;
+        uint16 daoShareBps;
         bool swapsPaused;
         mapping(address => mapping(address => address)) getPair;
         address[] allPairs;
@@ -39,55 +45,49 @@ contract DmdSwapFactory is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
 
     error ZeroAddress();
     error IdenticalAddresses();
-    error NotAContract(address account);
     error PairExists(address pair);
     error FeeTooHigh(uint256 fee, uint256 max);
     error Unauthorized();
     error Paused();
     error AlreadyInState();
 
+    modifier onlyAdminOrOwner() {
+        if (msg.sender != _getFactoryStorage().admin && msg.sender != owner()) revert Unauthorized();
+        _;
+    }
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    /// @param owner_      TimelockController (sole upgrade/parameter authority).
-    /// @param guardian_   Emergency key that can ONLY pause (instant, no timelock).
-    /// @param pairBeacon_ UpgradeableBeacon holding the DmdSwapPair implementation.
-    /// @param swapFeeBps_ Initial swap fee in bps (30 = 0.30 %).
-    /// @param feeTo_      Receives the protocol share of every swap fee directly (the admin wallet).
-    /// @param protocolFeeShareBps_ Protocol share of the swap fee in bps (5_000 = half).
+    /// @param owner_         The DMD DAO (sole authority for upgrades and settings).
+    /// @param admin_         Admin wallet: emergency pause, DAO fee wallet, receives the admin share.
+    /// @param pairBeacon_    DmdSwapPairBeacon holding the DmdSwapPair implementation.
+    /// @param swapFeeBps_    Swap fee in bps of the input (30 = 0.30 %).
+    /// @param adminShareBps_ Admin share of the swap fee in bps (2_500 = a quarter of the fee).
+    /// @param daoShareBps_   DAO share of the swap fee in bps (2_500 = a quarter of the fee).
+    /// @param daoFeeTo_      DAO fee wallet, or address(0) to set it later with `setDaoFeeTo`.
     function initialize(
         address owner_,
-        address guardian_,
+        address admin_,
         address pairBeacon_,
         uint16 swapFeeBps_,
-        address feeTo_,
-        uint16 protocolFeeShareBps_
+        uint16 adminShareBps_,
+        uint16 daoShareBps_,
+        address daoFeeTo_
     ) external initializer {
-        if (owner_ == address(0) || guardian_ == address(0) || pairBeacon_ == address(0)) revert ZeroAddress();
+        if (owner_ == address(0) || admin_ == address(0)) revert ZeroAddress();
         if (pairBeacon_.code.length == 0) revert NotAContract(pairBeacon_);
-        if (swapFeeBps_ > MAX_SWAP_FEE_BPS) revert FeeTooHigh(swapFeeBps_, MAX_SWAP_FEE_BPS);
-        if (protocolFeeShareBps_ > MAX_PROTOCOL_FEE_SHARE_BPS) {
-            revert FeeTooHigh(protocolFeeShareBps_, MAX_PROTOCOL_FEE_SHARE_BPS);
-        }
-        if (protocolFeeShareBps_ != 0 && feeTo_ == address(0)) revert ZeroAddress();
-
-        __Ownable_init(owner_);
-        __Ownable2Step_init();
-        __UUPSUpgradeable_init();
+        __DmdSwapOwnable_init(owner_);
 
         FactoryStorage storage $ = _getFactoryStorage();
         $.pairBeacon = pairBeacon_;
-        $.guardian = guardian_;
-        $.swapFeeBps = swapFeeBps_;
-        $.feeTo = feeTo_;
-        $.protocolFeeShareBps = protocolFeeShareBps_;
-
-        emit GuardianUpdated(address(0), guardian_);
-        emit SwapFeeUpdated(0, swapFeeBps_);
-        emit FeeToUpdated(address(0), feeTo_);
-        emit ProtocolFeeShareUpdated(0, protocolFeeShareBps_);
+        $.admin = admin_;
+        emit AdminUpdated(address(0), admin_);
+        _setSwapFee($, swapFeeBps_);
+        _setFeeShares($, adminShareBps_, daoShareBps_);
+        if (daoFeeTo_ != address(0)) _setDaoFeeTo($, daoFeeTo_);
     }
 
     // ─────────────────────────────────────────────── pair creation
@@ -116,50 +116,47 @@ contract DmdSwapFactory is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         emit PairCreated(token0, token1, pair, $.allPairs.length);
     }
 
-    // ─────────────────────────────────────────────── governance (timelock-only)
+    // ─────────────────────────────────────────────── admin (or DAO)
 
-    function setFeeTo(address newFeeTo) external onlyOwner {
+    /// @notice Emergency stop for swaps, liquidity adds and pair creation. Takes effect immediately.
+    function pause() external onlyAdminOrOwner {
         FactoryStorage storage $ = _getFactoryStorage();
-        emit FeeToUpdated($.feeTo, newFeeTo);
-        $.feeTo = newFeeTo; // address(0) disables the protocol fee (100 % of the fee then stays with LPs)
-    }
-
-    function setSwapFee(uint16 newFeeBps) external onlyOwner {
-        if (newFeeBps > MAX_SWAP_FEE_BPS) revert FeeTooHigh(newFeeBps, MAX_SWAP_FEE_BPS);
-        FactoryStorage storage $ = _getFactoryStorage();
-        emit SwapFeeUpdated($.swapFeeBps, newFeeBps);
-        $.swapFeeBps = newFeeBps;
-    }
-
-    function setProtocolFeeShare(uint16 newShareBps) external onlyOwner {
-        if (newShareBps > MAX_PROTOCOL_FEE_SHARE_BPS) revert FeeTooHigh(newShareBps, MAX_PROTOCOL_FEE_SHARE_BPS);
-        FactoryStorage storage $ = _getFactoryStorage();
-        emit ProtocolFeeShareUpdated($.protocolFeeShareBps, newShareBps);
-        $.protocolFeeShareBps = newShareBps;
-    }
-
-    function setGuardian(address newGuardian) external onlyOwner {
-        if (newGuardian == address(0)) revert ZeroAddress();
-        FactoryStorage storage $ = _getFactoryStorage();
-        emit GuardianUpdated($.guardian, newGuardian);
-        $.guardian = newGuardian;
-    }
-
-    /// @notice Emergency stop (guardian or owner, takes effect immediately).
-    function pause() external {
-        FactoryStorage storage $ = _getFactoryStorage();
-        if (msg.sender != $.guardian && msg.sender != owner()) revert Unauthorized();
         if ($.swapsPaused) revert AlreadyInState();
         $.swapsPaused = true;
         emit SwapsPaused(msg.sender);
     }
 
-    /// @notice Resume trading. Owner (timelock) only — a stolen guardian key can't unpause mid-incident.
+    /// @notice Sets (or replaces) the wallet that receives the DAO share of every swap fee.
+    ///         address(0) means "not set": the DAO share then goes to the admin wallet.
+    function setDaoFeeTo(address newDaoFeeTo) external onlyAdminOrOwner {
+        _setDaoFeeTo(_getFactoryStorage(), newDaoFeeTo);
+    }
+
+    /// @notice Hands the admin role (pause key, DAO-fee-wallet setter, admin fee receiver) to a new wallet.
+    ///         One-step: effective immediately. The DAO can also call this, e.g. to replace a lost admin key.
+    function transferAdmin(address newAdmin) external onlyAdminOrOwner {
+        if (newAdmin == address(0)) revert ZeroAddress();
+        FactoryStorage storage $ = _getFactoryStorage();
+        emit AdminUpdated($.admin, newAdmin);
+        $.admin = newAdmin;
+    }
+
+    // ─────────────────────────────────────────────── DAO only
+
+    /// @notice Resumes trading. DAO only, so a stolen admin key can't unpause during an incident.
     function unpause() external onlyOwner {
         FactoryStorage storage $ = _getFactoryStorage();
         if (!$.swapsPaused) revert AlreadyInState();
         $.swapsPaused = false;
         emit SwapsUnpaused(msg.sender);
+    }
+
+    function setSwapFee(uint16 newFeeBps) external onlyOwner {
+        _setSwapFee(_getFactoryStorage(), newFeeBps);
+    }
+
+    function setFeeShares(uint16 newAdminShareBps, uint16 newDaoShareBps) external onlyOwner {
+        _setFeeShares(_getFactoryStorage(), newAdminShareBps, newDaoShareBps);
     }
 
     // ─────────────────────────────────────────────── views
@@ -168,36 +165,42 @@ contract DmdSwapFactory is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         return _getFactoryStorage().pairBeacon;
     }
 
-    function feeTo() external view returns (address) {
-        return _getFactoryStorage().feeTo;
+    function admin() external view returns (address) {
+        return _getFactoryStorage().admin;
     }
 
-    function guardian() external view returns (address) {
-        return _getFactoryStorage().guardian;
+    /// @return The DAO fee wallet, or address(0) if it hasn't been set (its share then goes to the admin).
+    function daoFeeTo() external view returns (address) {
+        return _getFactoryStorage().daoFeeTo;
     }
 
     function swapFeeBps() external view returns (uint16) {
         return _getFactoryStorage().swapFeeBps;
     }
 
-    function protocolFeeShareBps() external view returns (uint16) {
-        return _getFactoryStorage().protocolFeeShareBps;
+    function adminShareBps() external view returns (uint16) {
+        return _getFactoryStorage().adminShareBps;
+    }
+
+    function daoShareBps() external view returns (uint16) {
+        return _getFactoryStorage().daoShareBps;
     }
 
     function swapsPaused() external view returns (bool) {
         return _getFactoryStorage().swapsPaused;
     }
 
-    /// @notice One-call read used by pairs on every swap/mint.
-    function swapConfig() external view returns (bool paused, uint16 feeBps, address feeTo_, uint16 shareBps) {
+    function swapConfig() external view returns (SwapConfig memory cfg) {
         FactoryStorage storage $ = _getFactoryStorage();
-        return ($.swapsPaused, $.swapFeeBps, $.feeTo, $.protocolFeeShareBps);
-    }
-
-    /// @notice One-call read used by pairs when accruing the protocol fee.
-    function protocolFeeConfig() external view returns (address feeTo_, uint16 shareBps) {
-        FactoryStorage storage $ = _getFactoryStorage();
-        return ($.feeTo, $.protocolFeeShareBps);
+        address dao = $.daoFeeTo;
+        cfg = SwapConfig({
+            paused: $.swapsPaused,
+            feeBps: $.swapFeeBps,
+            adminFeeTo: $.admin,
+            adminShareBps: $.adminShareBps,
+            daoFeeTo: dao == address(0) ? $.admin : dao,
+            daoShareBps: $.daoShareBps
+        });
     }
 
     function getPair(address tokenA, address tokenB) external view returns (address) {
@@ -214,8 +217,23 @@ contract DmdSwapFactory is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
 
     // ─────────────────────────────────────────────── internals
 
-    function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
-        if (newImplementation.code.length == 0) revert NotAContract(newImplementation);
+    function _setSwapFee(FactoryStorage storage $, uint16 newFeeBps) private {
+        if (newFeeBps > MAX_SWAP_FEE_BPS) revert FeeTooHigh(newFeeBps, MAX_SWAP_FEE_BPS);
+        emit SwapFeeUpdated($.swapFeeBps, newFeeBps);
+        $.swapFeeBps = newFeeBps;
+    }
+
+    function _setFeeShares(FactoryStorage storage $, uint16 newAdminShareBps, uint16 newDaoShareBps) private {
+        uint256 total = uint256(newAdminShareBps) + newDaoShareBps;
+        if (total > MAX_PROTOCOL_SHARE_BPS) revert FeeTooHigh(total, MAX_PROTOCOL_SHARE_BPS);
+        $.adminShareBps = newAdminShareBps;
+        $.daoShareBps = newDaoShareBps;
+        emit FeeSharesUpdated(newAdminShareBps, newDaoShareBps);
+    }
+
+    function _setDaoFeeTo(FactoryStorage storage $, address newDaoFeeTo) private {
+        emit DaoFeeToUpdated($.daoFeeTo, newDaoFeeTo);
+        $.daoFeeTo = newDaoFeeTo;
     }
 
     function _getFactoryStorage() private pure returns (FactoryStorage storage $) {

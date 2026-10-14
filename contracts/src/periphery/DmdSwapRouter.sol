@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.25;
 
-import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
@@ -14,23 +11,20 @@ import {IDmdSwapPair} from "../interfaces/IDmdSwapPair.sol";
 import {IWDMD} from "../interfaces/IWDMD.sol";
 import {DmdSwapLibrary} from "../libraries/DmdSwapLibrary.sol";
 import {DmdSwapRouterBase} from "./DmdSwapRouterBase.sol";
+import {DmdSwapOwnable} from "../governance/DmdSwapOwnable.sol";
 
 /// @title DmdSwapRouter
 /// @notice User entry point for liquidity and swaps (ERC-20 <-> ERC-20, native DMD <-> ERC-20).
-/// @dev UUPS-upgradeable, owner = 24h timelock. Holds no funds between transactions.
-contract DmdSwapRouter is
-    Initializable,
-    UUPSUpgradeable,
-    Ownable2StepUpgradeable,
-    ReentrancyGuardUpgradeable,
-    DmdSwapRouterBase
-{
+/// @dev UUPS-upgradeable; owner = the DMD DAO (upgrades via DAO proposals). Holds no funds between transactions
+///      and never receives native DMD (payouts go through DmdNativeUnwrapper; it has no receive function).
+contract DmdSwapRouter is DmdSwapOwnable, ReentrancyGuardUpgradeable, DmdSwapRouterBase {
     using SafeERC20 for IERC20;
 
     /// @custom:storage-location erc7201:dmdswap.storage.Router
     struct RouterStorage {
         address factory;
         address wdmd;
+        address unwrapper;
     }
 
     // keccak256(abi.encode(uint256(keccak256("dmdswap.storage.Router")) - 1)) & ~bytes32(uint256(0xff))
@@ -46,22 +40,23 @@ contract DmdSwapRouter is
         _disableInitializers();
     }
 
-    function initialize(address owner_, address factory_, address wdmd_) external initializer {
-        if (owner_ == address(0)) revert ZeroAddress();
+    /// @param owner_     The DMD DAO.
+    /// @param factory_   DmdSwapFactory proxy.
+    /// @param wdmd_      The official Wrapped DMD.
+    /// @param unwrapper_ DmdNativeUnwrapper bound to the same WDMD.
+    function initialize(address owner_, address factory_, address wdmd_, address unwrapper_)
+        external
+        initializer
+    {
         if (factory_.code.length == 0) revert NotAContract(factory_);
         if (wdmd_.code.length == 0) revert NotAContract(wdmd_);
-        __Ownable_init(owner_);
-        __Ownable2Step_init();
+        _setUpUnwrapper(wdmd_, unwrapper_);
+        __DmdSwapOwnable_init(owner_);
         __ReentrancyGuard_init();
-        __UUPSUpgradeable_init();
         RouterStorage storage $ = _rs();
         $.factory = factory_;
         $.wdmd = wdmd_;
-    }
-
-    /// @dev Only WDMD may send native DMD here (during unwraps).
-    receive() external payable {
-        if (msg.sender != _rs().wdmd) revert OnlyWDMD();
+        $.unwrapper = unwrapper_;
     }
 
     function factory() external view returns (address) {
@@ -70,6 +65,10 @@ contract DmdSwapRouter is
 
     function WDMD() external view returns (address) {
         return _rs().wdmd;
+    }
+
+    function unwrapper() external view returns (address) {
+        return _rs().unwrapper;
     }
 
     // ─────────────────────────────────────────────── liquidity
@@ -187,8 +186,7 @@ contract DmdSwapRouter is
         (, amountDMD) = _removeLiquidity(token, wdmd, liquidity, amountTokenMin, amountDMDMin, address(this));
         uint256 tokenReceived = IERC20(token).balanceOf(address(this)) - tokenBefore;
         IERC20(token).safeTransfer(to, tokenReceived);
-        IWDMD(wdmd).withdraw(amountDMD);
-        _safeTransferDMD(to, amountDMD);
+        _unwrapFromRouter(to, amountDMD);
     }
 
     // ─────────────────────────────────────────────── swaps
@@ -251,8 +249,7 @@ contract DmdSwapRouter is
         _checkIn(amounts[0], amountInMax);
         _pullToFirstPair(path, amounts[0]);
         _swap(amounts, path, address(this));
-        IWDMD(wdmd).withdraw(amounts[amounts.length - 1]);
-        _safeTransferDMD(to, amounts[amounts.length - 1]);
+        _unwrapFromRouter(to, amounts[amounts.length - 1]);
     }
 
     function swapExactTokensForDMD(
@@ -270,8 +267,7 @@ contract DmdSwapRouter is
         _checkOut(amounts[amounts.length - 1], amountOutMin);
         _pullToFirstPair(path, amounts[0]);
         _swap(amounts, path, address(this));
-        IWDMD(wdmd).withdraw(amounts[amounts.length - 1]);
-        _safeTransferDMD(to, amounts[amounts.length - 1]);
+        _unwrapFromRouter(to, amounts[amounts.length - 1]);
     }
 
     function swapDMDForExactTokens(uint256 amountOut, address[] calldata path, address to, uint256 deadline)
@@ -407,8 +403,7 @@ contract DmdSwapRouter is
         (amountToken, amountDMD) =
             _removeLiquidity(token, wdmd, liquidity, amountTokenMin, amountDMDMin, address(this));
         IERC20(token).safeTransfer(to, amountToken);
-        IWDMD(wdmd).withdraw(amountDMD);
-        _safeTransferDMD(to, amountDMD);
+        _unwrapFromRouter(to, amountDMD);
     }
 
     function _permit(
@@ -443,8 +438,8 @@ contract DmdSwapRouter is
         return _rs().wdmd;
     }
 
-    function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
-        if (newImplementation.code.length == 0) revert NotAContract(newImplementation);
+    function _unwrapperAddr() internal view override returns (address) {
+        return _rs().unwrapper;
     }
 
     function _rs() private pure returns (RouterStorage storage $) {

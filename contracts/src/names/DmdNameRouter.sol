@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.25;
 
-import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IDmdSwapFactory} from "../interfaces/IDmdSwapFactory.sol";
 import {IDmdNameResolver} from "../interfaces/IDmdNameResolver.sol";
-import {IWDMD} from "../interfaces/IWDMD.sol";
 import {DmdSwapLibrary} from "../libraries/DmdSwapLibrary.sol";
 import {DmdSwapRouterBase} from "../periphery/DmdSwapRouterBase.sol";
+import {DmdSwapOwnable} from "../governance/DmdSwapOwnable.sol";
 
 /// @title DmdNameRouter
 /// @notice Swap-and-send / send directly to a DMD Name (e.g. "alice" for alice.dmd).
@@ -21,13 +18,8 @@ import {DmdSwapRouterBase} from "../periphery/DmdSwapRouterBase.sol";
 ///      reverts unless it still resolves to exactly that address. A name transferred, deactivated,
 ///      expired or blocked between quote and execution can therefore never redirect funds.
 ///      All functions honour the factory's emergency pause.
-contract DmdNameRouter is
-    Initializable,
-    UUPSUpgradeable,
-    Ownable2StepUpgradeable,
-    ReentrancyGuardUpgradeable,
-    DmdSwapRouterBase
-{
+///      UUPS-upgradeable; owner = the DMD DAO (upgrades and resolver changes via DAO proposals).
+contract DmdNameRouter is DmdSwapOwnable, ReentrancyGuardUpgradeable, DmdSwapRouterBase {
     using SafeERC20 for IERC20;
 
     /// @custom:storage-location erc7201:dmdswap.storage.NameRouter
@@ -35,6 +27,7 @@ contract DmdNameRouter is
         address factory;
         address wdmd;
         address resolver;
+        address unwrapper;
     }
 
     // keccak256(abi.encode(uint256(keccak256("dmdswap.storage.NameRouter")) - 1)) & ~bytes32(uint256(0xff))
@@ -57,24 +50,27 @@ contract DmdNameRouter is
         _disableInitializers();
     }
 
-    function initialize(address owner_, address factory_, address wdmd_, address resolver_) external initializer {
-        if (owner_ == address(0)) revert ZeroAddress();
+    /// @param owner_     The DMD DAO.
+    /// @param factory_   DmdSwapFactory proxy.
+    /// @param wdmd_      The official Wrapped DMD.
+    /// @param resolver_  DmdNameResolver proxy.
+    /// @param unwrapper_ DmdNativeUnwrapper bound to the same WDMD.
+    function initialize(address owner_, address factory_, address wdmd_, address resolver_, address unwrapper_)
+        external
+        initializer
+    {
         if (factory_.code.length == 0) revert NotAContract(factory_);
         if (wdmd_.code.length == 0) revert NotAContract(wdmd_);
         if (resolver_.code.length == 0) revert NotAContract(resolver_);
-        __Ownable_init(owner_);
-        __Ownable2Step_init();
+        _setUpUnwrapper(wdmd_, unwrapper_);
+        __DmdSwapOwnable_init(owner_);
         __ReentrancyGuard_init();
-        __UUPSUpgradeable_init();
         NameRouterStorage storage $ = _ns();
         $.factory = factory_;
         $.wdmd = wdmd_;
         $.resolver = resolver_;
+        $.unwrapper = unwrapper_;
         emit NameResolverUpdated(address(0), resolver_);
-    }
-
-    receive() external payable {
-        if (msg.sender != _ns().wdmd) revert OnlyWDMD();
     }
 
     modifier whenNotPaused() {
@@ -82,7 +78,7 @@ contract DmdNameRouter is
         _;
     }
 
-    // ─────────────────────────────────────────────── governance
+    // ─────────────────────────────────────────────── governance (DAO only)
 
     function setNameResolver(address resolver_) external onlyOwner {
         if (resolver_.code.length == 0) revert NotAContract(resolver_);
@@ -103,6 +99,10 @@ contract DmdNameRouter is
 
     function nameResolver() external view returns (address) {
         return _ns().resolver;
+    }
+
+    function unwrapper() external view returns (address) {
+        return _ns().unwrapper;
     }
 
     function resolveName(string calldata name) external view returns (address) {
@@ -201,8 +201,7 @@ contract DmdNameRouter is
         if (amountIn > amountInMax) revert ExcessiveInputAmount(amountIn, amountInMax);
         _pullToFirstPair(path, amountIn);
         _swap(amounts, path, address(this));
-        IWDMD(wdmd).withdraw(amountOut);
-        _safeTransferDMD(to, amountOut);
+        _unwrapFromRouter(to, amountOut);
         emit NamePayment(msg.sender, to, address(0), amountOut, name);
     }
 
@@ -250,8 +249,8 @@ contract DmdNameRouter is
         return _ns().wdmd;
     }
 
-    function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
-        if (newImplementation.code.length == 0) revert NotAContract(newImplementation);
+    function _unwrapperAddr() internal view override returns (address) {
+        return _ns().unwrapper;
     }
 
     function _ns() private pure returns (NameRouterStorage storage $) {
